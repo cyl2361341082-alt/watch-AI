@@ -15,6 +15,7 @@ import android.text.Editable;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.text.style.BackgroundColorSpan;
 import android.text.style.ForegroundColorSpan;
@@ -76,6 +77,9 @@ public class MainActivity extends Activity {
     private EditText promptInput;
     private TextView statusText;
     private View historyPanel;
+    private View topMenuOverlay;
+    private View modelMenuOverlay;
+    private View userJumpRail;
     private String currentSessionId;
     private boolean sending;
     private float gestureStartX;
@@ -93,9 +97,11 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         root = new FrameLayout(this);
+        root.setKeepScreenOn(true);
         root.setBackgroundColor(BG);
         root.setFocusable(true);
         root.setFocusableInTouchMode(true);
@@ -155,35 +161,29 @@ public class MainActivity extends Activity {
     private void showChat() {
         root.removeAllViews();
         historyPanel = null;
+        topMenuOverlay = null;
+        modelMenuOverlay = null;
+        userJumpRail = null;
         container = makeSafeContainer();
 
         LinearLayout top = new LinearLayout(this);
-        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setGravity(Gravity.CENTER);
         top.setOrientation(LinearLayout.HORIZONTAL);
         container.addView(top, new LinearLayout.LayoutParams(-1, dp(24)));
 
-        statusText = label("模型: " + getModel(), 11, TEXT, true);
+        statusText = label(topWindowText(modelStatusText()), 10, TEXT, true);
         statusText.setSingleLine(true);
-        statusText.setPadding(dp(7), 0, 0, 0);
-        top.addView(statusText, new LinearLayout.LayoutParams(0, -1, 1));
-        Button newChat = smallButton("新建");
-        newChat.setBackgroundColor(BG);
-        newChat.setOnClickListener(new View.OnClickListener() {
+        statusText.setEllipsize(TextUtils.TruncateAt.END);
+        statusText.setGravity(Gravity.CENTER);
+        statusText.setPadding(dp(7), 0, dp(7), 0);
+        statusText.setBackground(roundedBackground(PANEL, 10));
+        statusText.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                startNewSession();
+                showTopMenu();
             }
         });
-        top.addView(newChat, new LinearLayout.LayoutParams(dp(38), dp(20)));
-        Button settings = smallButton("设");
-        settings.setBackgroundColor(BG);
-        settings.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showSettings();
-            }
-        });
-        top.addView(settings, new LinearLayout.LayoutParams(dp(28), dp(20)));
+        top.addView(statusText, new LinearLayout.LayoutParams(-1, dp(22)));
 
         chatScroll = new ScrollView(this);
         chatScroll.setFillViewport(false);
@@ -240,7 +240,6 @@ public class MainActivity extends Activity {
         inputBar.addView(send, sendLp);
         hideInputBar();
         renderMessages();
-        addUserJumpButtons();
         root.requestFocus();
         hideKeyboard(root);
     }
@@ -251,6 +250,8 @@ public class MainActivity extends Activity {
         uiHandler.removeCallbacks(hideInputRunnable);
         inputBar = null;
         historyPanel = null;
+        topMenuOverlay = null;
+        modelMenuOverlay = null;
         container = makeSafeContainer();
 
         TextView title = label("API 设置", 11, TEXT, true);
@@ -324,6 +325,244 @@ public class MainActivity extends Activity {
         actions.addView(save, new LinearLayout.LayoutParams(0, dp(24), 1));
     }
 
+    private void showTopMenu() {
+        if (root == null) return;
+        hideModelMenu();
+        if (topMenuOverlay != null) {
+            hideTopMenu();
+            return;
+        }
+
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.TRANSPARENT);
+        overlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideTopMenu();
+            }
+        });
+
+        LinearLayout menu = compactMenuPanel();
+        menu.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+            }
+        });
+
+        addMenuItem(menu, "切换模型", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideTopMenu();
+                showModelPickerMenu();
+            }
+        });
+        addMenuItem(menu, "新对话", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideTopMenu();
+                startNewSession();
+            }
+        });
+        addMenuItem(menu, "设置", new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideTopMenu();
+                showSettings();
+            }
+        });
+
+        FrameLayout.LayoutParams menuLp = new FrameLayout.LayoutParams(dp(122), -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        menuLp.topMargin = topMenuTopMargin();
+        overlay.addView(menu, menuLp);
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        topMenuOverlay = overlay;
+    }
+
+    private void showModelPickerMenu() {
+        if (root == null) return;
+        hideTopMenu();
+        hideModelMenu();
+
+        final FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.TRANSPARENT);
+        overlay.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                hideModelMenu();
+            }
+        });
+
+        LinearLayout panel = compactMenuPanel();
+        panel.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+            }
+        });
+
+        TextView title = label("切换模型", 9, TEXT, true);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(dp(5), 0, dp(5), dp(2));
+        panel.addView(title, new LinearLayout.LayoutParams(-1, dp(20)));
+
+        final TextView note = label("获取中...", 7, MUTED, false);
+        note.setSingleLine(true);
+        note.setEllipsize(TextUtils.TruncateAt.END);
+        note.setGravity(Gravity.CENTER);
+        note.setPadding(dp(5), 0, dp(5), dp(3));
+        panel.addView(note, new LinearLayout.LayoutParams(-1, dp(17)));
+
+        ScrollView scroll = new ScrollView(this);
+        final LinearLayout list = new LinearLayout(this);
+        list.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(list, new ScrollView.LayoutParams(-1, -2));
+        panel.addView(scroll, new LinearLayout.LayoutParams(-1, dp(92)));
+
+        String current = getModel();
+        if (current.length() > 0) {
+            addModelChoice(list, current, true);
+        }
+
+        FrameLayout.LayoutParams panelLp = new FrameLayout.LayoutParams(dp(166), -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        panelLp.topMargin = topMenuTopMargin();
+        overlay.addView(panel, panelLp);
+        root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+        modelMenuOverlay = overlay;
+        fetchModelsIntoMenu(list, note);
+    }
+
+    private LinearLayout compactMenuPanel() {
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(5), dp(5), dp(5), dp(4));
+        panel.setBackground(roundedBackground(Color.rgb(15, 18, 24), 9));
+        return panel;
+    }
+
+    private void addMenuItem(LinearLayout menu, String text, View.OnClickListener listener) {
+        TextView item = label(text, 9, TEXT, false);
+        item.setSingleLine(true);
+        item.setEllipsize(TextUtils.TruncateAt.END);
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(6), 0, dp(6), 0);
+        item.setBackground(roundedBackground(PANEL, 7));
+        item.setOnClickListener(listener);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(24));
+        lp.setMargins(0, 0, 0, dp(3));
+        menu.addView(item, lp);
+    }
+
+    private void addModelChoice(LinearLayout list, final String modelId, boolean current) {
+        String label = current ? "* " + modelId : modelId;
+        addMenuItem(list, shorten(label, 26), new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                prefs.edit().putString("model", modelId).apply();
+                setStatus(modelStatusText());
+                hideModelMenu();
+            }
+        });
+    }
+
+    private void fetchModelsIntoMenu(final LinearLayout list, final TextView note) {
+        final String baseValue = getBaseUrl();
+        final String keyValue = getApiKey();
+        final String currentModel = getModel();
+        if (baseValue.trim().length() == 0) {
+            note.setText("先设置 Base URL");
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    URL url = new URL(modelsUrl(baseValue));
+                    HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(25000);
+                    conn.setRequestMethod("GET");
+                    conn.setRequestProperty("Accept", "application/json");
+                    if (keyValue.length() > 0) {
+                        conn.setRequestProperty("Authorization", "Bearer " + keyValue);
+                    }
+                    int code = conn.getResponseCode();
+                    String response = readAll(code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream());
+                    if (code < 200 || code >= 300) {
+                        throw new Exception("HTTP " + code);
+                    }
+                    JSONObject json = new JSONObject(response);
+                    JSONArray data = json.optJSONArray("data");
+                    if (data == null || data.length() == 0) {
+                        throw new Exception("没有模型");
+                    }
+                    final List<String> ids = modelIds(data, currentModel);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (modelMenuOverlay == null) return;
+                            list.removeAllViews();
+                            int limit = Math.min(ids.size(), 6);
+                            for (int i = 0; i < limit; i++) {
+                                String id = ids.get(i);
+                                addModelChoice(list, id, id.equals(currentModel));
+                            }
+                            note.setText(ids.size() > limit ? "显示前 " + limit + " 个" : "选择后立即生效");
+                        }
+                    });
+                } catch (final Exception e) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (modelMenuOverlay != null) {
+                                note.setText("获取失败: " + shorten(e.getMessage(), 18));
+                            }
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+
+    private List<String> modelIds(JSONArray data, String currentModel) {
+        List<String> ids = new ArrayList<>();
+        if (currentModel != null && currentModel.trim().length() > 0) {
+            ids.add(currentModel.trim());
+        }
+        for (int i = 0; i < data.length() && ids.size() < 8; i++) {
+            JSONObject item = data.optJSONObject(i);
+            if (item == null) continue;
+            String id = item.optString("id", "").trim();
+            if (id.length() == 0 || containsString(ids, id)) continue;
+            ids.add(id);
+        }
+        return ids;
+    }
+
+    private boolean containsString(List<String> values, String needle) {
+        for (String value : values) {
+            if (value.equals(needle)) return true;
+        }
+        return false;
+    }
+
+    private int topMenuTopMargin() {
+        int top = container != null ? container.getPaddingTop() : dp(18);
+        return top + dp(26);
+    }
+
+    private void hideTopMenu() {
+        if (topMenuOverlay != null && root != null) {
+            root.removeView(topMenuOverlay);
+            topMenuOverlay = null;
+        }
+    }
+
+    private void hideModelMenu() {
+        if (modelMenuOverlay != null && root != null) {
+            root.removeView(modelMenuOverlay);
+            modelMenuOverlay = null;
+        }
+    }
+
     private LinearLayout makeSafeContainer() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -354,12 +593,14 @@ public class MainActivity extends Activity {
         boolean round = getResources().getConfiguration().isScreenRound();
         int horizontal = round ? Math.max(dp(42), min / 7) : dp(10);
         int vertical = round ? Math.max(dp(14), min / 16) : dp(6);
+        int topVertical = round ? Math.max(dp(10), min / 20) : dp(4);
         WindowInsets insets = android.os.Build.VERSION.SDK_INT >= 23 ? root.getRootWindowInsets() : null;
         if (insets != null) {
             horizontal = Math.max(horizontal, Math.max(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetRight()) + dp(8));
-            vertical = Math.max(vertical, Math.max(insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetBottom()) + dp(3));
+            topVertical = Math.max(topVertical, insets.getSystemWindowInsetTop());
+            vertical = Math.max(vertical, insets.getSystemWindowInsetBottom() + dp(3));
         }
-        box.setPadding(horizontal, vertical, horizontal, vertical);
+        box.setPadding(horizontal, topVertical, horizontal, vertical);
     }
 
     private void sendPrompt() {
@@ -400,7 +641,7 @@ public class MainActivity extends Activity {
                     saveCurrentSession();
                     requestSessionTitle(currentSessionId);
                     renderMessages();
-                    setStatus("模型: " + getModel());
+                    setStatus(modelStatusText());
                 }
             });
             }
@@ -664,7 +905,7 @@ public class MainActivity extends Activity {
         saveSessions();
         hideHistoryPanel();
         renderMessages();
-        setStatus("模型: " + getModel());
+        setStatus(modelStatusText());
     }
 
     private void switchSession(String id) {
@@ -675,7 +916,7 @@ public class MainActivity extends Activity {
         loadCurrentSessionMessages();
         hideHistoryPanel();
         renderMessages();
-        setStatus("模型: " + getModel());
+        setStatus(modelStatusText());
     }
 
     private void deleteSession(String id) {
@@ -974,13 +1215,14 @@ public class MainActivity extends Activity {
         if (chatList == null) return;
         chatList.removeAllViews();
         for (Message m : messages) {
-            TextView bubble = label("", 10, TEXT, false);
+            TextView bubble = label("", 9, TEXT, false);
             bubble.setText(formatMessageText(m));
             bubble.setTextColor("user".equals(m.role) ? Color.WHITE : TEXT);
-            bubble.setBackgroundColor("user".equals(m.role) ? Color.rgb(30, 72, 140) : PANEL);
-            bubble.setPadding(dp(6), dp(3), dp(6), dp(3));
+            bubble.setBackground(roundedBackground("user".equals(m.role) ? Color.rgb(30, 72, 140) : PANEL, 7));
+            bubble.setLineSpacing(0f, 1.06f);
+            bubble.setPadding(dp(7), dp(5), dp(7), dp(5));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-            lp.setMargins(0, dp(1), 0, dp(2));
+            lp.setMargins(0, dp(2), 0, dp(4));
             chatList.addView(bubble, lp);
         }
         chatScroll.post(new Runnable() {
@@ -989,6 +1231,7 @@ public class MainActivity extends Activity {
                 chatScroll.fullScroll(View.FOCUS_DOWN);
             }
         });
+        refreshUserJumpButtons();
     }
 
     private void addUserJumpButtons() {
@@ -1020,6 +1263,26 @@ public class MainActivity extends Activity {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(24), dp(56), Gravity.RIGHT | Gravity.CENTER_VERTICAL);
         lp.setMargins(0, 0, dp(6), 0);
         root.addView(rail, lp);
+        userJumpRail = rail;
+    }
+
+    private void refreshUserJumpButtons() {
+        if (root == null) return;
+        if (!hasUserMessages()) {
+            if (userJumpRail != null) {
+                root.removeView(userJumpRail);
+                userJumpRail = null;
+            }
+            return;
+        }
+        if (userJumpRail == null) addUserJumpButtons();
+    }
+
+    private boolean hasUserMessages() {
+        for (Message message : messages) {
+            if ("user".equals(message.role)) return true;
+        }
+        return false;
     }
 
     private Button navButton(String text) {
@@ -1338,11 +1601,18 @@ public class MainActivity extends Activity {
         s = unwrapCommand(s, "\\mathtt");
         s = unwrapCommand(s, "\\mathcal");
         s = unwrapCommand(s, "\\operatorname");
+        s = unwrapCommand(s, "\\operatorname*");
+        s = removeMathStyleCommands(s);
+        s = replaceDerivativeMacros(s);
+        s = replaceDifferentialMacros(s);
         s = replaceTwoArgCommand(s, "\\binom", "C(", ", ", ")");
+        s = replaceCalculusFractions(s);
         s = replaceFractions(s, "\\frac");
         s = replaceFractions(s, "\\dfrac");
         s = replaceFractions(s, "\\tfrac");
         s = replaceSqrt(s);
+        s = replaceCombiningCommand(s, "\\ddot", "\u0308");
+        s = replaceCombiningCommand(s, "\\dot", "\u0307");
         s = replaceCombiningCommand(s, "\\overline", "\u0305");
         s = replaceCombiningCommand(s, "\\bar", "\u0304");
         s = replaceCombiningCommand(s, "\\hat", "\u0302");
@@ -1372,8 +1642,9 @@ public class MainActivity extends Activity {
                 {"\\neq", "≠"}, {"\\ne", "≠"}, {"\\equiv", "≡"}, {"\\cong", "≅"}, {"\\simeq", "≃"}, {"\\approx", "≈"}, {"\\propto", "∝"}, {"\\asymp", "≍"}, {"\\sim", "∼"},
                 {"\\preceq", "⪯"}, {"\\succeq", "⪰"}, {"\\prec", "≺"}, {"\\succ", "≻"},
                 {"\\ll", "≪"}, {"\\gg", "≫"}, {"\\perp", "⊥"}, {"\\parallel", "∥"}, {"\\angle", "∠"}, {"\\triangle", "△"},
-                {"\\infty", "∞"}, {"\\sum", "∑"}, {"\\prod", "∏"}, {"\\coprod", "∐"}, {"\\iint", "∬"}, {"\\iiint", "∭"}, {"\\oint", "∮"}, {"\\int", "∫"},
+                {"\\infty", "∞"}, {"\\sum", "∑"}, {"\\prod", "∏"}, {"\\coprod", "∐"}, {"\\iiiint", "⨌"}, {"\\iint", "∬"}, {"\\iiint", "∭"}, {"\\oint", "∮"}, {"\\oiint", "∯"}, {"\\int", "∫"},
                 {"\\partial", "∂"}, {"\\nabla", "∇"}, {"\\pm", "±"}, {"\\mp", "∓"}, {"\\therefore", "∴"}, {"\\because", "∵"},
+                {"\\prime", "′"}, {"\\backprime", "‵"},
                 {"\\not\\in", "∉"}, {"\\notin", "∉"}, {"\\in", "∈"}, {"\\ni", "∋"}, {"\\emptyset", "∅"}, {"\\varnothing", "∅"}, {"\\empty", "∅"},
                 {"\\not\\subseteq", "⊈"}, {"\\not\\supseteq", "⊉"}, {"\\subsetneq", "⊊"}, {"\\supsetneq", "⊋"},
                 {"\\subseteq", "⊆"}, {"\\supseteq", "⊇"}, {"\\subset", "⊂"}, {"\\supset", "⊃"}, {"\\nsubseteq", "⊈"}, {"\\nsupseteq", "⊉"},
@@ -1404,6 +1675,158 @@ public class MainActivity extends Activity {
             s = s.replace(pair[0], pair[1]);
         }
         return s;
+    }
+
+    private String removeMathStyleCommands(String s) {
+        return s.replace("\\displaystyle", "")
+                .replace("\\textstyle", "")
+                .replace("\\scriptstyle", "")
+                .replace("\\scriptscriptstyle", "")
+                .replace("\\limits", "")
+                .replace("\\nolimits", "");
+    }
+
+    private String replaceDerivativeMacros(String s) {
+        s = replaceDerivativeMacro(s, "\\pdv", true);
+        s = replaceDerivativeMacro(s, "\\pderiv", true);
+        s = replaceDerivativeMacro(s, "\\dv", false);
+        s = replaceDerivativeMacro(s, "\\odv", false);
+        s = replaceDerivativeMacro(s, "\\deriv", false);
+        return s;
+    }
+
+    private String replaceDerivativeMacro(String s, String command, boolean partial) {
+        int index = s.indexOf(command);
+        while (index >= 0) {
+            int cursor = index + command.length();
+            String order = "";
+            if (cursor < s.length() && s.charAt(cursor) == '[') {
+                int close = s.indexOf(']', cursor);
+                if (close < 0) {
+                    index = s.indexOf(command, cursor);
+                    continue;
+                }
+                order = s.substring(cursor + 1, close).trim();
+                cursor = close + 1;
+            }
+            if (cursor >= s.length() || s.charAt(cursor) != '{') {
+                index = s.indexOf(command, cursor);
+                continue;
+            }
+            int firstEnd = findMatchingBrace(s, cursor);
+            if (firstEnd < 0) break;
+            String first = s.substring(cursor + 1, firstEnd);
+            int next = firstEnd + 1;
+            String replacement;
+            int replaceEnd = firstEnd;
+            if (next < s.length() && s.charAt(next) == '{') {
+                int secondEnd = findMatchingBrace(s, next);
+                if (secondEnd < 0) break;
+                String second = s.substring(next + 1, secondEnd);
+                replacement = derivativeText(compactDerivativePart(first), compactDerivativePart(second), compactOrder(order), partial, true);
+                replaceEnd = secondEnd;
+            } else {
+                replacement = derivativeText("", compactDerivativePart(first), compactOrder(order), partial, false);
+            }
+            s = s.substring(0, index) + replacement + s.substring(replaceEnd + 1);
+            index = s.indexOf(command, index + replacement.length());
+        }
+        return s;
+    }
+
+    private String replaceDifferentialMacros(String s) {
+        s = replaceDifferentialMacro(s, "\\dd");
+        s = replaceDifferentialMacro(s, "\\diff");
+        s = replaceDifferentialMacro(s, "\\differential");
+        return s;
+    }
+
+    private String replaceDifferentialMacro(String s, String command) {
+        String needle = command + "{";
+        int index = s.indexOf(needle);
+        while (index >= 0) {
+            int argStart = index + command.length();
+            int argEnd = findMatchingBrace(s, argStart);
+            if (argEnd < 0) break;
+            String replacement = "d" + compactDerivativePart(s.substring(argStart + 1, argEnd));
+            s = s.substring(0, index) + replacement + s.substring(argEnd + 1);
+            index = s.indexOf(needle, index + replacement.length());
+        }
+        return s;
+    }
+
+    private String replaceCalculusFractions(String s) {
+        s = replaceCalculusFractions(s, "\\frac");
+        s = replaceCalculusFractions(s, "\\dfrac");
+        s = replaceCalculusFractions(s, "\\tfrac");
+        return s;
+    }
+
+    private String replaceCalculusFractions(String s, String command) {
+        String needle = command + "{";
+        int index = s.indexOf(needle);
+        while (index >= 0) {
+            int numeratorStart = index + command.length();
+            int numeratorEnd = findMatchingBrace(s, numeratorStart);
+            if (numeratorEnd < 0 || numeratorEnd + 1 >= s.length() || s.charAt(numeratorEnd + 1) != '{') break;
+            int denominatorStart = numeratorEnd + 1;
+            int denominatorEnd = findMatchingBrace(s, denominatorStart);
+            if (denominatorEnd < 0) break;
+            String numerator = compactDerivativePart(s.substring(numeratorStart + 1, numeratorEnd));
+            String denominator = compactDerivativePart(s.substring(denominatorStart + 1, denominatorEnd));
+            String replacement = calculusFractionText(numerator, denominator);
+            if (replacement == null) {
+                index = s.indexOf(needle, denominatorEnd + 1);
+                continue;
+            }
+            s = s.substring(0, index) + replacement + s.substring(denominatorEnd + 1);
+            index = s.indexOf(needle, index + replacement.length());
+        }
+        return s;
+    }
+
+    private String calculusFractionText(String numerator, String denominator) {
+        if (!isDifferentialPart(numerator) || !isDifferentialPart(denominator)) return null;
+        return numerator + "/" + denominator;
+    }
+
+    private String derivativeText(String target, String variable, String order, boolean partial, boolean hasTarget) {
+        String symbol = partial ? "∂" : "d";
+        String orderSuffix = order.length() > 0 ? "^{" + order + "}" : "";
+        String numerator = symbol + orderSuffix + (hasTarget ? target : "");
+        String denominator = symbol + variable + orderSuffix;
+        return numerator + "/" + denominator;
+    }
+
+    private String compactOrder(String order) {
+        if (order == null) return "";
+        String value = order.trim();
+        if (value.length() == 0 || "1".equals(value)) return "";
+        return value;
+    }
+
+    private String compactDerivativePart(String value) {
+        String part = value == null ? "" : value.trim();
+        part = part.replace("\\left", "").replace("\\right", "");
+        part = part.replace("\\,", "").replace("\\;", "").replace("\\:", "").replace("\\!", "").replace("\\ ", "");
+        part = part.replace("\\partial", "∂");
+        part = part.replaceAll("\\s+", "");
+        return part;
+    }
+
+    private boolean isDifferentialPart(String value) {
+        if (value == null) return false;
+        String part = value.trim();
+        if ("d".equals(part) || "∂".equals(part)) return true;
+        if (part.startsWith("∂")) return part.length() > 1;
+        if (!part.startsWith("d") || part.length() < 2) return false;
+        char next = part.charAt(1);
+        if (next == '^' || next == '_' || next == '{' || next == '(' || next == '[' || next == '\\') return true;
+        if (Character.isLetter(next)) {
+            if (part.length() <= 4) return true;
+            return part.length() > 2 && (part.charAt(2) == '^' || part.charAt(2) == '_');
+        }
+        return false;
     }
 
     private String replaceMathEnvironments(String s) {
@@ -1454,7 +1877,28 @@ public class MainActivity extends Activity {
             open = "{";
             close = "";
         }
+        String compact = compactMathEnvironment(env, open, close, normalized);
+        if (compact != null) return compact;
         return open + "\n" + normalized + (close.length() > 0 ? "\n" + close : "");
+    }
+
+    private String compactMathEnvironment(String env, String open, String close, String normalized) {
+        if ("cases".equals(env) || "array".equals(env)) return null;
+        String[] rows = normalized.split("\n", -1);
+        if (rows.length == 0 || rows.length > 2) return null;
+        StringBuilder inline = new StringBuilder();
+        for (int i = 0; i < rows.length; i++) {
+            String row = compactSpaces(rows[i]);
+            if (row.length() == 0 || row.length() > 18) return null;
+            if (i > 0) inline.append("; ");
+            inline.append(row);
+        }
+        String result = open + inline.toString() + close;
+        return result.length() <= 34 ? result : null;
+    }
+
+    private String compactSpaces(String text) {
+        return text.trim().replaceAll("\\s+", " ");
     }
 
     private String cleanupMathEnvironmentTokens(String s) {
@@ -1555,11 +1999,26 @@ public class MainActivity extends Activity {
             if (denominatorEnd < 0) break;
             String numerator = s.substring(numeratorStart + 1, numeratorEnd);
             String denominator = s.substring(denominatorStart + 1, denominatorEnd);
-            String replacement = "(" + numerator + ")/(" + denominator + ")";
+            String replacement = compactFractionPart(numerator) + "/" + compactFractionPart(denominator);
             s = s.substring(0, index) + replacement + s.substring(denominatorEnd + 1);
             index = s.indexOf(needle, index + replacement.length());
         }
         return s;
+    }
+
+    private String compactFractionPart(String value) {
+        String trimmed = value == null ? "" : value.trim();
+        if (isSimpleFractionPart(trimmed)) return trimmed;
+        return "(" + trimmed + ")";
+    }
+
+    private boolean isSimpleFractionPart(String value) {
+        if (value.length() == 0) return false;
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (!Character.isLetterOrDigit(c) && c != '.' && c != '\'') return false;
+        }
+        return true;
     }
 
     private String replaceTwoArgCommand(String s, String command, String before, String between, String after) {
@@ -1750,7 +2209,18 @@ public class MainActivity extends Activity {
     }
 
     private void setStatus(String text) {
-        if (statusText != null) statusText.setText(text);
+        if (statusText != null) statusText.setText(topWindowText(text));
+    }
+
+    private String topWindowText(String text) {
+        String value = text == null ? "" : text.trim();
+        if (value.length() == 0) value = "模型未设";
+        return value + "  v";
+    }
+
+    private String modelStatusText() {
+        String model = getModel();
+        return model.length() == 0 ? "模型未设" : model;
     }
 
     private String getBaseUrl() {

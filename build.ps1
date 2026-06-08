@@ -1,10 +1,28 @@
 $ErrorActionPreference = 'Stop'
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$Sdk = 'C:\Users\23613\AppData\Local\Android\Sdk'
+
+function Select-ExistingPath($Name, $Candidates) {
+  foreach ($Candidate in $Candidates) {
+    if ($Candidate -and (Test-Path $Candidate)) {
+      return $Candidate
+    }
+  }
+  throw "Missing $Name. Checked: $($Candidates -join ', ')"
+}
+
+$Sdk = Select-ExistingPath 'Android SDK' @(
+  'C:\Users\23613\AppData\Local\Android\Sdk',
+  'C:\Users\23613\Documents\Codex\2026-05-07\files-mentioned-by-the-user-deepseek\android-sdk'
+)
 $BuildTools = Join-Path $Sdk 'build-tools\35.0.0'
 $PlatformJar = Join-Path $Sdk 'platforms\android-35\android.jar'
-$JavaHome = 'C:\Program Files\Android\Android Studio\jbr'
+$JavaHome = Select-ExistingPath 'JBR' @(
+  'C:\Program Files\Android\Android Studio\jbr',
+  'C:\Users\23613\.jdks\ms-21.0.10',
+  'C:\Program Files\JetBrains\PyCharm Community Edition 2025.2.3\jbr',
+  'C:\Program Files\JetBrains\CLion 2025.3.1\jbr'
+)
 $env:JAVA_HOME = $JavaHome
 $env:Path = "$JavaHome\bin;$env:Path"
 
@@ -13,20 +31,30 @@ $Classes = Join-Path $Build 'classes'
 $Dex = Join-Path $Build 'dex'
 $ClassesJar = Join-Path $Build 'classes.jar'
 $Out = Join-Path $Root 'dist'
+$Res = Join-Path $Root 'app\src\main\res'
 $UnsignedAp = Join-Path $Build 'watch-ai.ap_'
 $UnsignedApk = Join-Path $Build 'watch-ai-unsigned.apk'
 $AlignedApk = Join-Path $Build 'watch-ai-aligned.apk'
 $SignedApk = Join-Path $Out 'WatchAI-0.1-watch.apk'
-$Keystore = Join-Path (Split-Path -Parent $Root) 'output\codex-debug.keystore'
+$Keystore = Select-ExistingPath 'debug keystore' @(
+  (Join-Path (Split-Path -Parent $Root) 'output\codex-debug.keystore'),
+  (Join-Path (Split-Path -Parent $Sdk) 'output\codex-debug.keystore')
+)
 
 Remove-Item -Recurse -Force $Build, $Out -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $Classes, $Dex, $Out | Out-Null
 
-& (Join-Path $BuildTools 'aapt.exe') package `
-  -f `
-  -M (Join-Path $Root 'app\src\main\AndroidManifest.xml') `
-  -I $PlatformJar `
-  -F $UnsignedAp
+$AaptArgs = @(
+  'package',
+  '-f',
+  '-M', (Join-Path $Root 'app\src\main\AndroidManifest.xml'),
+  '-I', $PlatformJar,
+  '-F', $UnsignedAp
+)
+if (Test-Path $Res) {
+  $AaptArgs += @('-S', $Res)
+}
+& (Join-Path $BuildTools 'aapt.exe') @AaptArgs
 
 $Sources = Get-ChildItem -Recurse (Join-Path $Root 'app\src\main\java') -Filter '*.java' | ForEach-Object { $_.FullName }
 & (Join-Path $JavaHome 'bin\javac.exe') `
